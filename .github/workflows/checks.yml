@@ -14,16 +14,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  syntax:
-    runs-on: ubuntu-24.04
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            system: x86_64-linux
+          - os: macos-15
+            system: aarch64-darwin
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
-      # Never realize the dev shell or compile uncached tool packages in CI.
+      - name: Verify native runner architecture
+        env:
+          EXPECTED_SYSTEM: ${{ matrix.system }}
+        run: test "$(nix eval --impure --raw --expr builtins.currentSystem)" = "$EXPECTED_SYSTEM"
+      # Never realize the full dev shell or compile uncached tool packages in CI.
       - name: Format and syntax
+        if: runner.os == 'Linux'
         run: |
           nix shell --inputs-from . nixpkgs#just nixpkgs#nixfmt --max-jobs 0 --command bash -euc '
             nixfmt --check flake.nix
@@ -33,4 +46,40 @@ jobs:
           for profile in dev debug validate; do cmake -P "cmake/$profile.cmake"; done
           git diff --check
       - name: Evaluate both platforms without building packages
+        if: runner.os == 'Linux'
         run: nix flake check --all-systems --no-build
+      - name: Core tools — compile, run, and check C++ headers
+        shell: bash
+        run: |
+          tools=(
+            nixpkgs#llvmPackages.clang nixpkgs#llvmPackages.clang-tools
+            nixpkgs#cmake nixpkgs#ninja nixpkgs#ccache nixpkgs#just
+            nixpkgs#python3 nixpkgs#uv nixpkgs#ruff nixpkgs#z3
+          )
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            tools+=(nixpkgs#llvmPackages.lld nixpkgs#llvmPackages.lldb)
+          fi
+          nix shell --inputs-from . "${tools[@]}" --max-jobs 0 --command bash -euo pipefail <<'SMOKE'
+          export CC="$(command -v clang)" CXX="$(command -v clang++)"
+          export LLVM_SOURCE="$RUNNER_TEMP/tool smoke/source" LLVM_BUILD="$RUNNER_TEMP/tool smoke/build"
+          export LLVM_PROFILE=dev JOBS=2 LINK_JOBS=1 LLVM_DEV_RUNTIME_LIBRARY_PATH=""
+          export CCACHE_DIR="$RUNNER_TEMP/tool smoke/ccache"
+          mkdir -p "$LLVM_SOURCE/llvm"
+          printf '%s\n' 'cmake_minimum_required(VERSION 3.20)' 'project(Smoke LANGUAGES C CXX)' 'set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")' 'add_executable(smoke main.cpp)' > "$LLVM_SOURCE/llvm/CMakeLists.txt"
+          printf '%s\n' '#include <numeric>' '#include <vector>' 'int main() { std::vector<int> v{1,2,3}; return std::accumulate(v.begin(), v.end(), 0) == 6 ? 0 : 1; }' > "$LLVM_SOURCE/llvm/main.cpp"
+          just configure
+          just build smoke
+          just run smoke
+          clangd --log=error --check="$LLVM_SOURCE/llvm/main.cpp" --compile-commands-dir="$LLVM_BUILD" --query-driver="$CC,$CXX"
+          ccache --show-stats
+          python3 -c 'import ssl, venv; print("Python runtime OK")'
+          uv --version
+          ruff --version
+          z3 --version
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            /usr/bin/xcrun lldb --version
+          else
+            ld.lld --version
+            lldb --version
+          fi
+          SMOKE
