@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           tools=(
-            nixpkgs#llvmPackages.clang nixpkgs#llvmPackages.clang-tools
+            nixpkgs#bash nixpkgs#llvmPackages.clang nixpkgs#llvmPackages.clang-tools
             nixpkgs#cmake nixpkgs#ninja nixpkgs#ccache nixpkgs#just
             nixpkgs#python3 nixpkgs#uv nixpkgs#ruff nixpkgs#z3
           )
