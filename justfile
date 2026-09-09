@@ -1,67 +1,89 @@
 set positional-arguments
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# List commands.
+source := env("LLVM_SOURCE", "llvm-project")
+build_dir := env("LLVM_BUILD", "build/dev")
+profile := env("LLVM_PROFILE", "dev")
+jobs := env("JOBS", "10")
+link_jobs := env("LINK_JOBS", "1")
+test_jobs := env("TEST_JOBS", "8")
+validation := build_dir + "-validation"
+alive2 := build_dir + "-alive2"
+
 default:
     @just --list
 
-# Read-only tool, source, build, debugger, and cache diagnostics (--json available).
-doctor *args:
-    @python3 -B scripts/llvm_dev.py doctor "$@"
+# Show the installed tools; no builds or configuration changes.
+doctor:
+    @command -v clang clangd cmake ninja ccache python3 uv ty ruff z3 creduce hyperfine
 
-# Configure the selected build; refuse to overwrite unmanaged builds.
+# Extra arguments are ordinary CMake -D options.
 configure *args:
-    @python3 -B scripts/llvm_dev.py configure "$@"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    platform=()
+    if [[ $(uname -s) == Linux ]]; then
+      platform=(-DLLVM_USE_LINKER=lld "-DCMAKE_BUILD_RPATH=${LLVM_DEV_RUNTIME_LIBRARY_PATH//:/;}")
+    fi
+    cmake -S {{ quote(source + "/llvm") }} -B {{ quote(build_dir) }} -G Ninja \
+      -C {{ quote("cmake/" + profile + ".cmake") }} \
+      -UCMAKE_PROJECT_LLVM_INCLUDE -UHAVE_LIBPFM_INITIALIZE '-UHAVE_PERFMON_*' \
+      -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
+      "-DCMAKE_C_COMPILER_LAUNCHER=$(command -v ccache)" \
+      "-DCMAKE_CXX_COMPILER_LAUNCHER=$(command -v ccache)" \
+      "-DPython3_EXECUTABLE=$(command -v python3)" \
+      -DLLVM_PARALLEL_COMPILE_JOBS={{ quote(jobs) }} \
+      -DLLVM_PARALLEL_TABLEGEN_JOBS={{ quote(jobs) }} \
+      -DLLVM_PARALLEL_LINK_JOBS={{ quote(link_jobs) }} "${platform[@]}" "$@"
 
-# Build explicit targets (default: small middle-end tool set).
-build *args:
-    @python3 -B scripts/llvm_dev.py build "$@"
+build *targets="opt":
+    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "$@"
 
-# Build suite prerequisites and run one test path (relative to llvm-project/).
+middle-tools:
+    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target opt llvm-as llvm-dis llvm-link llvm-diff llvm-extract llvm-reduce FileCheck count not split-file llvm-config
+
+backend-tools:
+    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target llc llvm-mc llvm-mca llvm-exegesis llvm-objdump llvm-readobj llvm-nm llvm-size llvm-symbolizer llvm-dwarfdump
+
+# Path is relative to llvm-project/. Build needed tools first; no hidden builds.
 test path *args:
-    @python3 -B scripts/llvm_dev.py test "$@"
+    python3 {{ quote(build_dir + "/bin/llvm-lit") }} -sv -j {{ quote(test_jobs) }} --timeout 120 {{ quote(source) }}/"$1" "${@:2}"
 
-# Explicit broader suite: llvm, clang, clang-tools, or mlir.
-check suite *args:
-    @python3 -B scripts/llvm_dev.py check "$@"
+# Explicitly build prerequisites and run a full upstream suite.
+check suite:
+    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "check-$1"
 
-# Run a tool from the selected build, never the packaged reference compiler.
 run tool *args:
-    @python3 -B scripts/llvm_dev.py run "$@"
+    @{{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
 
-# Open an active-build tool in the platform's LLDB.
 debug tool *args:
-    @python3 -B scripts/llvm_dev.py debug "$@"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ $(uname -s) == Darwin ]]; then
+      exec /usr/bin/xcrun lldb -- {{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
+    fi
+    exec lldb -- {{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
 
-# Expose the active compilation database without overwriting user-managed files.
-compdb *args:
-    @python3 -B scripts/llvm_dev.py compdb "$@"
+compdb:
+    @test ! -e compile_commands.json || test -L compile_commands.json
+    ln -sfn "$(realpath {{ quote(build_dir + "/compile_commands.json") }})" compile_commands.json
 
-# Build the middle-end inspection, reduction, and regression-test utilities.
-middle-tools *args:
-    @python3 -B scripts/llvm_dev.py build opt llvm-as llvm-dis llvm-link llvm-diff llvm-extract llvm-reduce FileCheck count not split-file llvm-config "$@"
+cache-stats:
+    ccache --show-stats
 
-# Build backend disassembly, scheduling, debug-info, and instruction-benchmark tools.
-backend-tools *args:
-    @python3 -B scripts/llvm_dev.py build llc llvm-mc llvm-mca llvm-exegesis llvm-objdump llvm-readobj llvm-nm llvm-size llvm-symbolizer llvm-dwarfdump "$@"
+# Optional, expensive first build. LLVM's normal dev build stays RTTI/EH-free.
+build-alive2:
+    LLVM_SOURCE={{ quote(source) }} LLVM_BUILD={{ quote(validation) }} LLVM_PROFILE=validate JOBS={{ quote(jobs) }} LINK_JOBS=1 just configure
+    cmake --build {{ quote(validation) }} --parallel {{ quote(jobs) }} --target opt llvm-config
+    cmake -S "$ALIVE2_SOURCE" -B {{ quote(alive2) }} -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_LLVM_UTILS=ON -DBUILD_TV=OFF \
+      "-DLLVM_DIR=$(realpath {{ quote(validation + "/lib/cmake/llvm") }})" \
+      -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
+      "-DCMAKE_C_COMPILER_LAUNCHER=$(command -v ccache)" \
+      "-DCMAKE_CXX_COMPILER_LAUNCHER=$(command -v ccache)" \
+      -DZ3_INCLUDE_DIR="$Z3_INCLUDE_DIR" -DZ3_LIBRARIES="$Z3_LIBRARY"
+    cmake --build {{ quote(alive2) }} --parallel {{ quote(jobs) }} --target alive-tv alive-exec
 
-# Build pinned Alive2 against a separate RTTI-enabled LLVM from this source tree.
-build-alive2 *args:
-    @python3 -B -m scripts.alive2 build "$@"
-
-# Validate an explicit before/after IR pair; fail on counterexamples or incomplete proofs.
+# Bounded, intraprocedural IR-pair validation; rejects incomplete/incorrect results.
 prove *args:
-    @python3 -B -m scripts.alive2 prove "$@"
-
-# Show persistent cache effectiveness; do not clear it.
-cache-stats *args:
-    @python3 -B scripts/llvm_dev.py cache-stats "$@"
-
-# Fast workspace checks; no LLVM checkout or LLVM build required.
-verify-workspace:
-    actionlint .github/workflows/*.yml
-    ruff check scripts tests
-    ruff format --check scripts tests
-    ty check scripts tests --python "$(command -v python3)"
-    nixfmt --check flake.nix
-    python3 -B -m unittest discover -s tests -v
+    @python3 scripts/prove.py {{ quote(alive2 + "/alive-tv") }} {{ quote(validation + "/bin/opt") }} "$@"

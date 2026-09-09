@@ -10,31 +10,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: workspace-${{ github.workflow }}-${{ github.ref }}
+  group: workspace-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  checks:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            system: x86_64-linux
-          - os: macos-15
-            system: aarch64-darwin
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+  syntax:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
-      - name: Verify runner architecture
-        env:
-          EXPECTED_SYSTEM: ${{ matrix.system }}
-        run: test "$(nix eval --impure --raw --expr builtins.currentSystem)" = "$EXPECTED_SYSTEM"
-      - name: Check workspace in a Nix build sandbox
-        run: nix flake check --print-build-logs
-      - name: Check actual host tool availability
-        run: nix develop --command just doctor
+      # Never realize the dev shell or compile uncached tool packages in CI.
+      - name: Format and syntax
+        run: |
+          nix shell --inputs-from . nixpkgs#just nixpkgs#nixfmt --max-jobs 0 --command bash -euc '
+            nixfmt --check flake.nix
+            just --fmt --check
+          '
+          python3 -m py_compile scripts/prove.py
+          for profile in dev debug validate; do cmake -P "cmake/$profile.cmake"; done
+          git diff --check
+      - name: Evaluate both platforms without building packages
+        run: nix flake check --all-systems --no-build

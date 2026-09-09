@@ -4,11 +4,9 @@
 !/flake.nix
 !/flake.lock
 !/justfile
-!/pyproject.toml
 !/README.md
 !/cmake/
 !/scripts/
-!/tests/
 !/repros/
 !/.github/
 

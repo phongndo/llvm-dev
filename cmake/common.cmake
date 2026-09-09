@@ -1,5 +1,4 @@
 # Build policy lives here, not in the shell or command recipes.
-set(CMAKE_PROJECT_LLVM_INCLUDE "${CMAKE_CURRENT_LIST_DIR}/test-dependencies.cmake" CACHE FILEPATH "Build-only test prerequisites" FORCE)
 # Command-line -D overrides come after this initial-cache file.
 set(LLVM_ENABLE_PROJECTS "clang;clang-tools-extra;mlir" CACHE STRING "Enabled projects" FORCE)
 set(LLVM_TARGETS_TO_BUILD "X86;AArch64" CACHE STRING "Enabled backends" FORCE)
@@ -17,6 +16,5 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "clangd compilation database" FO
 # Current LLVM requests PCH by default. ccache rejects it without sloppiness;
 # favor correct, reusable cached objects over PCH in these development profiles.
 set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON CACHE BOOL "Cache-first development" FORCE)
-# Compiler launchers are passed as absolute paths by configure. Do not also use
-# LLVM_CCACHE_BUILD: that installs a second layer of caching via RULE_LAUNCH_COMPILE.
+# Use compiler launchers from just configure, not a second ccache layer.
 set(LLVM_CCACHE_BUILD OFF CACHE BOOL "Use CMake compiler launchers instead" FORCE)
