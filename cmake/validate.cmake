@@ -1,0 +1,10 @@
+# Separate, smaller LLVM build for Alive2; never repurpose the everyday build.
+include("${CMAKE_CURRENT_LIST_DIR}/common.cmake")
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Validation support toolchain" FORCE)
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "Keep validation build costs bounded" FORCE)
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "Keep validation build costs bounded" FORCE)
+set(LLVM_ENABLE_RTTI ON CACHE BOOL "Required by Alive2" FORCE)
+set(LLVM_ENABLE_EH ON CACHE BOOL "Alive2 translation validation support" FORCE)
+set(LLVM_ENABLE_PROJECTS "" CACHE STRING "LLVM-only validation build" FORCE)
+set(LLVM_TARGETS_TO_BUILD Native CACHE STRING "Only the host backend is needed here" FORCE)
+set(LLVM_INCLUDE_TESTS OFF CACHE BOOL "Use the dev build for LLVM regression tests" FORCE)

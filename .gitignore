@@ -1,4 +1,25 @@
+# Publish only intentional workspace files; preserve unrelated local projects.
 /*
 !/.gitignore
 !/flake.nix
 !/flake.lock
+!/justfile
+!/pyproject.toml
+!/README.md
+!/cmake/
+!/scripts/
+!/tests/
+!/repros/
+!/.github/
+
+# Even in tracked directories, generated files and credentials stay local.
+**/__pycache__/
+**/.ruff_cache/
+**/.venv/
+**/.DS_Store
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/Output/
+**/*.pyc
