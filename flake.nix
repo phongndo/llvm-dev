@@ -23,7 +23,9 @@
           pkgs = nixpkgs.legacyPackages.${system};
           inherit (pkgs) lib;
           linux = pkgs.stdenv.hostPlatform.isLinux;
-          clang = pkgs.llvmPackages.clang;
+          # The shell's own compiler, so Linux has no GCC wrapper competing for CC.
+          stdenv = pkgs.llvmPackages.stdenv;
+          clang = stdenv.cc;
           # Query only the pinned compiler wrappers for Nix's implicit SDK/headers.
           clangd = pkgs.writeShellApplication {
             name = "clangd";
@@ -32,16 +34,18 @@
                 --query-driver=${clang}/bin/clang,${clang}/bin/clang++ "$@"
             '';
           };
-          alive2 = pkgs.runCommand "alive2-source-${alive2-src.shortRev}" { } ''
-            cp -r ${alive2-src} "$out"
-            chmod -R u+w "$out"
+          alive2 = pkgs.applyPatches {
+            name = "alive2-source-${alive2-src.shortRev}";
+            src = alive2-src;
             # Immutable source has no Git metadata; keep third-party warnings nonfatal.
-            substituteInPlace "$out/CMakeLists.txt" \
-              --replace-fail 'find_package(Git REQUIRED)' "" \
-              --replace-fail 'COMMAND "''${GIT_EXECUTABLE}" describe --tags --dirty --always' \
-                'COMMAND "''${CMAKE_COMMAND}" -E echo "${alive2-src.rev}"' \
-              --replace-fail '-Wall -Werror -fPIC' '-Wall -fPIC'
-          '';
+            postPatch = ''
+              substituteInPlace CMakeLists.txt \
+                --replace-fail 'find_package(Git REQUIRED)' "" \
+                --replace-fail 'COMMAND "''${GIT_EXECUTABLE}" describe --tags --dirty --always' \
+                  'COMMAND "''${CMAKE_COMMAND}" -E echo "${alive2-src.rev}"' \
+                --replace-fail '-Wall -Werror -fPIC' '-Wall -fPIC'
+            '';
+          };
           # nixpkgs' libpfm release lacks Zen5 PMU support needed by llvm-exegesis.
           libpfm = pkgs.libpfm.overrideAttrs {
             version = "4.13.0-unstable-91970fe";
@@ -65,10 +69,9 @@
               z3
             ]
             ++ lib.optionals linux [ libpfm ];
-          runtimePath = lib.makeLibraryPath (libraries ++ [ pkgs.stdenv.cc.cc.lib ]);
         in
         {
-          default = pkgs.mkShell {
+          default = pkgs.mkShell.override { inherit stdenv; } {
             packages =
               with pkgs;
               [
@@ -86,7 +89,7 @@
                 just
                 (lib.hiPrio clangd)
                 llvmPackages.clang-tools
-                clang
+                llvmPackages.lld
                 ninja
                 nixd
                 nixfmt
@@ -95,28 +98,28 @@
                   p.psutil
                   p.pyyaml
                 ]))
-                re2c
                 ripgrep
                 ruff
-                swig
                 ty
                 uv
                 z3
               ]
               ++ lib.optionals linux [
-                llvmPackages.lld
                 llvmPackages.lldb
                 perf
               ];
             buildInputs = libraries;
-            LLVM_DEV_RUNTIME_LIBRARY_PATH = lib.optionalString linux runtimePath;
-            LD_LIBRARY_PATH = lib.optionalString linux runtimePath;
+            # Baked into Linux build RPATHs by `just configure`. Not LD_LIBRARY_PATH:
+            # that would leak this pin's libstdc++ into every program in the shell.
+            LLVM_DEV_RUNTIME_LIBRARY_PATH = lib.optionalString linux (
+              lib.makeLibraryPath (libraries ++ [ pkgs.stdenv.cc.cc.lib ])
+            );
             LLVM_DEV_CLANGD = "${clangd}/bin/clangd";
             ALIVE2_SOURCE = "${alive2}";
             Z3_INCLUDE_DIR = "${lib.getDev pkgs.z3}/include";
             Z3_LIBRARY = "${lib.getLib pkgs.z3}/lib/libz3${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
             CCACHE_MAXSIZE = "100Gi";
-            CCACHE_COMPRESS = "true";
+            # The wrapper's hook sets bare names; keep full paths for clangd's query driver.
             shellHook = ''
               export CC="${clang}/bin/clang"
               export CXX="${clang}/bin/clang++"

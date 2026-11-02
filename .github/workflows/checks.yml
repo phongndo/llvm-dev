@@ -43,7 +43,7 @@ jobs:
             just --fmt --check
           '
           python3 -m py_compile scripts/prove.py
-          for profile in dev debug validate; do cmake -P "cmake/$profile.cmake"; done
+          for profile in cmake/*.cmake; do cmake -P "$profile"; done
           git diff --check
       - name: Evaluate both platforms without building packages
         if: runner.os == 'Linux'
@@ -62,7 +62,7 @@ jobs:
           nix shell --inputs-from . "${tools[@]}" --max-jobs 0 --command bash -euo pipefail <<'SMOKE'
           export CC="$(command -v clang)" CXX="$(command -v clang++)"
           export LLVM_SOURCE="$RUNNER_TEMP/tool smoke/source" LLVM_BUILD="$RUNNER_TEMP/tool smoke/build"
-          export LLVM_PROFILE=dev JOBS=2 LINK_JOBS=1 LLVM_DEV_RUNTIME_LIBRARY_PATH=""
+          export LLVM_PROFILE=dev LLVM_JOBS=2 LLVM_LINK_JOBS=1 LLVM_DEV_RUNTIME_LIBRARY_PATH=""
           export CCACHE_DIR="$RUNNER_TEMP/tool smoke/ccache"
           mkdir -p "$LLVM_SOURCE/llvm"
           printf '%s\n' 'cmake_minimum_required(VERSION 3.20)' 'project(Smoke LANGUAGES C CXX)' 'set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")' 'add_executable(smoke main.cpp)' > "$LLVM_SOURCE/llvm/CMakeLists.txt"

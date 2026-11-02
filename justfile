@@ -1,21 +1,42 @@
 set positional-arguments
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# Per-machine LLVM_* values come from each host's Home Manager config in
+# nix-config; the defaults here are conservative fallbacks for other machines.
 source := env("LLVM_SOURCE", "llvm-project")
-build_dir := env("LLVM_BUILD", "build/dev")
 profile := env("LLVM_PROFILE", "dev")
-jobs := env("JOBS", "10")
-link_jobs := env("LINK_JOBS", "1")
-test_jobs := env("TEST_JOBS", "8")
+
+# Spotlight skips *.noindex directories; build output churns too much to index.
+build_root := if os() == "macos" { "build.noindex" } else { "build" }
+build_dir := env("LLVM_BUILD", build_root / profile)
+jobs := env("LLVM_JOBS", "10")
+link_jobs := env("LLVM_LINK_JOBS", "1")
+test_jobs := env("LLVM_TEST_JOBS", num_cpus())
 validation := build_dir + "-validation"
 alive2 := build_dir + "-alive2"
+
+# On Linux hosts that set LLVM_MEMORY_MAX, builds and tests run in their own
+# systemd scope: the kernel and systemd-oomd then stop the build, not services.
+memory_high := env("LLVM_MEMORY_HIGH", "infinity")
+memory_max := env("LLVM_MEMORY_MAX", "")
+limit := if os() != "linux" { "" } else if memory_max == "" { "" } else { "systemd-run --user --scope --quiet --collect -p MemoryHigh=" + quote(memory_high) + " -p MemoryMax=" + quote(memory_max) + " -p ManagedOOMMemoryPressure=kill --" }
 
 default:
     @just --list
 
-# Show the installed tools; no builds or configuration changes.
+# Show the tools and this machine's settings; no builds or configuration changes.
 doctor:
-    @command -v clang clangd cmake ninja ccache python3 uv ty ruff z3 creduce hyperfine
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v clang clangd cmake ninja ccache python3 uv ty ruff z3 creduce hyperfine
+    echo "build: "{{ quote(build_dir) }}" ("{{ quote(profile) }}" profile)"
+    echo "jobs: "{{ quote(jobs) }}" compile, "{{ quote(link_jobs) }}" link, "{{ quote(test_jobs) }}" test"
+    if [[ $(uname -s) == Linux ]]; then
+      echo "memory limit: "{{ quote(if memory_max == "" { "none" } else { memory_high + " high, " + memory_max + " max" }) }}
+      echo "perf_event_paranoid: $(</proc/sys/kernel/perf_event_paranoid)"
+    else
+      /usr/bin/xcrun --find lldb
+    fi
 
 # Extra arguments are ordinary CMake -D options.
 configure *args:
@@ -23,7 +44,9 @@ configure *args:
     set -euo pipefail
     platform=()
     if [[ $(uname -s) == Linux ]]; then
-      platform=(-DLLVM_USE_LINKER=lld "-DCMAKE_BUILD_RPATH=${LLVM_DEV_RUNTIME_LIBRARY_PATH//:/;}")
+      # Split DWARF keeps debug info out of links: less link time, memory and disk.
+      platform=(-DLLVM_USE_LINKER=lld -DLLVM_USE_SPLIT_DWARF=ON
+        "-DCMAKE_BUILD_RPATH=${LLVM_DEV_RUNTIME_LIBRARY_PATH//:/;}")
     fi
     cmake -S {{ quote(source + "/llvm") }} -B {{ quote(build_dir) }} -G Ninja \
       -C {{ quote("cmake/" + profile + ".cmake") }} \
@@ -37,21 +60,21 @@ configure *args:
       -DLLVM_PARALLEL_LINK_JOBS={{ quote(link_jobs) }} "${platform[@]}" "$@"
 
 build *targets="opt":
-    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "$@"
+    {{ limit }} cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "$@"
 
 middle-tools:
-    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target opt llvm-as llvm-dis llvm-link llvm-diff llvm-extract llvm-reduce FileCheck count not split-file llvm-config
+    {{ limit }} cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target opt llvm-as llvm-dis llvm-link llvm-diff llvm-extract llvm-reduce FileCheck count not split-file llvm-config
 
 backend-tools:
-    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target llc llvm-mc llvm-mca llvm-exegesis llvm-objdump llvm-readobj llvm-nm llvm-size llvm-symbolizer llvm-dwarfdump
+    {{ limit }} cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target llc llvm-mc llvm-mca llvm-exegesis llvm-objdump llvm-readobj llvm-nm llvm-size llvm-symbolizer llvm-dwarfdump
 
 # Path is relative to llvm-project/. Build needed tools first; no hidden builds.
 test path *args:
-    python3 {{ quote(build_dir + "/bin/llvm-lit") }} -sv -j {{ quote(test_jobs) }} --timeout 120 {{ quote(source) }}/"$1" "${@:2}"
+    {{ limit }} python3 {{ quote(build_dir + "/bin/llvm-lit") }} -sv -j {{ quote(test_jobs) }} --timeout 120 {{ quote(source) }}/"$1" "${@:2}"
 
 # Explicitly build prerequisites and run a full upstream suite.
 check suite:
-    cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "check-$1"
+    {{ limit }} cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "check-$1"
 
 run tool *args:
     @{{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
@@ -64,6 +87,22 @@ debug tool *args:
     fi
     exec lldb -- {{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
 
+# Sample a tool run: perf on Linux, Instruments' Time Profiler on macOS.
+profile tool *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p {{ quote(build_dir + "/profiles") }}
+    out={{ quote(build_dir + "/profiles") }}/"$1-$(date +%Y%m%d-%H%M%S)"
+    if [[ $(uname -s) == Darwin ]]; then
+      /usr/bin/xcrun xctrace record --template 'Time Profiler' --output "$out.trace" \
+        --launch -- {{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
+      echo "open $out.trace"
+    else
+      # LLVM omits frame pointers; DWARF unwinding gives complete call stacks.
+      perf record --call-graph=dwarf -o "$out.data" -- {{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
+      echo "perf report -i $out.data"
+    fi
+
 compdb:
     @test ! -e compile_commands.json || test -L compile_commands.json
     ln -sfn "$(realpath {{ quote(build_dir + "/compile_commands.json") }})" compile_commands.json
@@ -73,16 +112,23 @@ cache-stats:
 
 # Optional, expensive first build. LLVM's normal dev build stays RTTI/EH-free.
 build-alive2:
-    LLVM_SOURCE={{ quote(source) }} LLVM_BUILD={{ quote(validation) }} LLVM_PROFILE=validate JOBS={{ quote(jobs) }} LINK_JOBS=1 just configure
-    cmake --build {{ quote(validation) }} --parallel {{ quote(jobs) }} --target opt llvm-config
+    #!/usr/bin/env bash
+    set -euo pipefail
+    platform=()
+    if [[ $(uname -s) == Linux ]]; then
+      platform=("-DCMAKE_BUILD_RPATH=${LLVM_DEV_RUNTIME_LIBRARY_PATH//:/;}")
+    fi
+    LLVM_SOURCE={{ quote(source) }} LLVM_BUILD={{ quote(validation) }} LLVM_PROFILE=validate \
+      LLVM_JOBS={{ quote(jobs) }} LLVM_LINK_JOBS=1 just configure
+    {{ limit }} cmake --build {{ quote(validation) }} --parallel {{ quote(jobs) }} --target opt llvm-config
     cmake -S "$ALIVE2_SOURCE" -B {{ quote(alive2) }} -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DBUILD_LLVM_UTILS=ON -DBUILD_TV=OFF \
       "-DLLVM_DIR=$(realpath {{ quote(validation + "/lib/cmake/llvm") }})" \
       -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
       "-DCMAKE_C_COMPILER_LAUNCHER=$(command -v ccache)" \
       "-DCMAKE_CXX_COMPILER_LAUNCHER=$(command -v ccache)" \
-      -DZ3_INCLUDE_DIR="$Z3_INCLUDE_DIR" -DZ3_LIBRARIES="$Z3_LIBRARY"
-    cmake --build {{ quote(alive2) }} --parallel {{ quote(jobs) }} --target alive-tv alive-exec
+      -DZ3_INCLUDE_DIR="$Z3_INCLUDE_DIR" -DZ3_LIBRARIES="$Z3_LIBRARY" "${platform[@]}"
+    {{ limit }} cmake --build {{ quote(alive2) }} --parallel {{ quote(jobs) }} --target alive-tv alive-exec
 
 # Bounded, intraprocedural IR-pair validation; rejects incomplete/incorrect results.
 prove *args:
