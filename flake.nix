@@ -3,7 +3,7 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   inputs.alive2-mcp = {
-    url = "github:phongndo/alive2-mcp/v0.1.0";
+    url = "github:phongndo/alive2-mcp/v0.1.1";
     inputs.nixpkgs.follows = "nixpkgs";
   };
   inputs.alive2-src = {
