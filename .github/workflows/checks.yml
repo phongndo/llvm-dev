@@ -52,7 +52,7 @@ jobs:
         run: |
           tools=(
             nixpkgs#bash nixpkgs#llvmPackages.clang nixpkgs#llvmPackages.clang-tools
-            nixpkgs#cmake nixpkgs#ninja nixpkgs#ccache nixpkgs#just
+            nixpkgs#cmake nixpkgs#ninja nixpkgs#ccache nixpkgs#flock nixpkgs#just
             nixpkgs#python3 nixpkgs#z3
           )
           if [[ "$RUNNER_OS" == Linux ]]; then

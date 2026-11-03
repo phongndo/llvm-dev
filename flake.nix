@@ -91,6 +91,7 @@
                 coreutils
                 creduce
                 fd
+                flock
                 gh
                 git
                 graphviz
