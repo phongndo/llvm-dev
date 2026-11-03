@@ -7,16 +7,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1793696574,
-        "narHash": "sha256-uk02/avTr6arlvozWnEiEds4+QkvaXEAyjsEFhBDBSY=",
+        "lastModified": 1793699035,
+        "narHash": "sha256-E0FVQcTNkJo90xbvTrgyP2arT+Nz7WpwSkZ/FSNw9wo=",
         "owner": "phongndo",
         "repo": "alive2-mcp",
-        "rev": "851ed495284e94bb63d4bad7a4ca056a42e33f59",
+        "rev": "dc118efe782bca0961db86d26603500431073f1c",
         "type": "github"
       },
       "original": {
         "owner": "phongndo",
-        "ref": "v0.1.1",
+        "ref": "v0.1.2",
         "repo": "alive2-mcp",
         "type": "github"
       }
