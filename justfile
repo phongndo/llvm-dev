@@ -3,6 +3,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 # Per-machine LLVM_* values come from each host's Home Manager config in
 # nix-config; the defaults here are conservative fallbacks for other machines.
+# cmake/<profile>.cmake: dev, debug, dev-shared (tools link libLLVM) or validate.
 profile := env("LLVM_PROFILE", "dev")
 
 # Every worktree of this repo is self-contained: its own llvm-project worktree
@@ -81,6 +82,8 @@ doctor:
       /usr/bin/xcrun --find lldb
     fi
 
+# Built tools reference this flake's Nix store paths: after `nix flake update`,
+# reconfigure and rebuild before garbage-collecting the old shell.
 # Extra arguments are ordinary CMake -D options.
 configure *args: _ready
     #!/usr/bin/env bash
