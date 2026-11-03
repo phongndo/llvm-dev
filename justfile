@@ -142,3 +142,12 @@ alive *args:
 # The Alive2 MCP server for this worktree; harnesses start it from .mcp.json and friends.
 alive-mcp:
     @just alive
+
+# List which of these tools are older than the source, so tests would use stale binaries.
+stale +tools:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for tool in "$@"; do
+      plan=$(ninja -C {{ quote(build_dir) }} -n "$tool")
+      if [[ $plan == *"no work to do"* ]]; then echo "fresh: $tool"; else echo "stale: $tool"; fi
+    done
