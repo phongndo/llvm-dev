@@ -6,13 +6,11 @@
 !/justfile
 !/README.md
 !/cmake/
-!/scripts/
 !/repros/
 !/.github/
 
 # Even in tracked directories, generated files and credentials stay local.
 **/__pycache__/
-**/.ruff_cache/
 **/.venv/
 **/.DS_Store
 **/.env

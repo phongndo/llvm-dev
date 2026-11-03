@@ -42,7 +42,6 @@ jobs:
             nixfmt --check flake.nix
             just --fmt --check
           '
-          python3 -m py_compile scripts/prove.py
           for profile in cmake/*.cmake; do cmake -P "$profile"; done
           git diff --check
       - name: Evaluate both platforms without building packages
@@ -54,7 +53,7 @@ jobs:
           tools=(
             nixpkgs#bash nixpkgs#llvmPackages.clang nixpkgs#llvmPackages.clang-tools
             nixpkgs#cmake nixpkgs#ninja nixpkgs#ccache nixpkgs#just
-            nixpkgs#python3 nixpkgs#uv nixpkgs#ruff nixpkgs#z3
+            nixpkgs#python3 nixpkgs#z3
           )
           if [[ "$RUNNER_OS" == Linux ]]; then
             tools+=(nixpkgs#llvmPackages.lld nixpkgs#llvmPackages.lldb)
@@ -73,8 +72,6 @@ jobs:
           clangd --log=error --check="$LLVM_SOURCE/llvm/main.cpp" --compile-commands-dir="$LLVM_BUILD" --query-driver="$CC,$CXX"
           ccache --show-stats
           python3 -c 'import ssl, venv; print("Python runtime OK")'
-          uv --version
-          ruff --version
           z3 --version
           if [[ "$RUNNER_OS" == macOS ]]; then
             /usr/bin/xcrun lldb --version

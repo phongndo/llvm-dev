@@ -28,7 +28,7 @@ default:
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v clang clangd cmake ninja ccache python3 uv ty ruff z3 creduce hyperfine alive2-mcp
+    command -v clang clangd cmake ninja ccache python3 z3 creduce hyperfine alive2-mcp
     echo "build: "{{ quote(build_dir) }}" ("{{ quote(profile) }}" profile)"
     echo "jobs: "{{ quote(jobs) }}" compile, "{{ quote(link_jobs) }}" link, "{{ quote(test_jobs) }}" test"
     if [[ $(uname -s) == Linux ]]; then
@@ -129,10 +129,6 @@ build-alive2:
       "-DCMAKE_CXX_COMPILER_LAUNCHER=$(command -v ccache)" \
       -DZ3_INCLUDE_DIR="$Z3_INCLUDE_DIR" -DZ3_LIBRARIES="$Z3_LIBRARY" "${platform[@]}"
     {{ limit }} cmake --build {{ quote(alive2) }} --parallel {{ quote(jobs) }} --target alive-tv alive-exec
-
-# Bounded, intraprocedural IR-pair validation; rejects incomplete/incorrect results.
-prove *args:
-    @python3 scripts/prove.py {{ quote(alive2 + "/alive-tv") }} {{ quote(validation + "/bin/opt") }} "$@"
 
 # Uses this worktree's opt for -passes, and a local alive-tv once `just build-alive2` ran.
 # Alive2 on IR: `just alive verify -passes gvn x.ll`; -opt upstream runs trunk instead.

@@ -109,9 +109,6 @@
                   p.pyyaml
                 ]))
                 ripgrep
-                ruff
-                ty
-                uv
                 z3
               ]
               ++ lib.optionals linux [
