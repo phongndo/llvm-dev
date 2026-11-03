@@ -2,13 +2,22 @@
   description = "LLVM development tools";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.alive2-mcp = {
+    url = "github:phongndo/alive2-mcp/v0.1.0";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
   inputs.alive2-src = {
     url = "github:AliveToolkit/alive2/c5773898e4e40097b377fe9200ccb82447f4289d";
     flake = false;
   };
 
   outputs =
-    { nixpkgs, alive2-src, ... }:
+    {
+      nixpkgs,
+      alive2-mcp,
+      alive2-src,
+      ...
+    }:
     let
       systems = nixpkgs.lib.genAttrs [
         "aarch64-darwin"
@@ -75,6 +84,7 @@
             packages =
               with pkgs;
               [
+                alive2-mcp.packages.${system}.default
                 bash
                 ccache
                 cmake

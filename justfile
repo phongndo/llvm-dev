@@ -28,7 +28,7 @@ default:
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
-    command -v clang clangd cmake ninja ccache python3 uv ty ruff z3 creduce hyperfine
+    command -v clang clangd cmake ninja ccache python3 uv ty ruff z3 creduce hyperfine alive2-mcp
     echo "build: "{{ quote(build_dir) }}" ("{{ quote(profile) }}" profile)"
     echo "jobs: "{{ quote(jobs) }}" compile, "{{ quote(link_jobs) }}" link, "{{ quote(test_jobs) }}" test"
     if [[ $(uname -s) == Linux ]]; then
@@ -133,3 +133,16 @@ build-alive2:
 # Bounded, intraprocedural IR-pair validation; rejects incomplete/incorrect results.
 prove *args:
     @python3 scripts/prove.py {{ quote(alive2 + "/alive-tv") }} {{ quote(validation + "/bin/opt") }} "$@"
+
+# Uses this worktree's opt for -passes, and a local alive-tv once `just build-alive2` ran.
+# Alive2 on IR: `just alive verify -passes gvn x.ll`; -opt upstream runs trunk instead.
+alive *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    flags=(-opt {{ quote(build_dir + "/bin/opt") }})
+    [[ -x {{ quote(alive2 + "/alive-tv") }} ]] && flags+=(-alive-tv {{ quote(alive2 + "/alive-tv") }})
+    exec alive2-mcp "${flags[@]}" "$@"
+
+# The Alive2 MCP server for this worktree; harnesses start it from .mcp.json and friends.
+alive-mcp:
+    @just alive

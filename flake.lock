@@ -1,5 +1,26 @@
 {
   "nodes": {
+    "alive2-mcp": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793692856,
+        "narHash": "sha256-0FmN0OhJVs2vT2G5gup5OExZo1rLhQ1FHdZf520bzbw=",
+        "owner": "phongndo",
+        "repo": "alive2-mcp",
+        "rev": "601bd7808043f103af77af96d65b4b386c30b21b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "phongndo",
+        "ref": "v0.1.0",
+        "repo": "alive2-mcp",
+        "type": "github"
+      }
+    },
     "alive2-src": {
       "flake": false,
       "locked": {
@@ -35,6 +56,7 @@
     },
     "root": {
       "inputs": {
+        "alive2-mcp": "alive2-mcp",
         "alive2-src": "alive2-src",
         "nixpkgs": "nixpkgs"
       }
