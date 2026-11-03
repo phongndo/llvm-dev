@@ -40,6 +40,21 @@ export CCACHE_NOHASHDIR := "1"
 default:
     @just --list
 
+# Sets up a fresh worktree of this repo the first time a recipe needs LLVM, so
+# no agent has to know about it: T3 runs setup-worktree when it creates a
+# worktree, and worktrees from any other harness get here.
+_ready:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "${LLVM_DEV_SETTING_UP:-}" ]] || [[ -d {{ quote(source / "llvm") }} && -f {{ quote(build_dir / "build.ninja") }} ]]; then
+      exit 0
+    fi
+    if [[ "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" == "$PWD" ]]; then
+      exit 0 # the main checkout is set up by hand
+    fi
+    echo "first use of this worktree: setting up its llvm-project and build" >&2
+    just setup-worktree >&2
+
 # Runs a build under the shared lock, at low priority and inside the memory limit.
 _build *cmd:
     #!/usr/bin/env bash
@@ -67,7 +82,7 @@ doctor:
     fi
 
 # Extra arguments are ordinary CMake -D options.
-configure *args:
+configure *args: _ready
     #!/usr/bin/env bash
     set -euo pipefail
     platform=()
@@ -87,24 +102,24 @@ configure *args:
       -DLLVM_PARALLEL_TABLEGEN_JOBS={{ quote(jobs) }} \
       -DLLVM_PARALLEL_LINK_JOBS={{ quote(link_jobs) }} "${platform[@]}" "$@"
 
-build *targets="opt":
+build *targets="opt": _ready
     @just _build cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "$@"
 
-middle-tools:
+middle-tools: _ready
     @just _build cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target opt llvm-as llvm-dis llvm-link llvm-diff llvm-extract llvm-reduce FileCheck count not split-file llvm-config
 
-backend-tools:
+backend-tools: _ready
     @just _build cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target llc llvm-mc llvm-mca llvm-exegesis llvm-objdump llvm-readobj llvm-nm llvm-size llvm-symbolizer llvm-dwarfdump
 
 # Path is relative to llvm-project/. Build needed tools first; no hidden builds.
-test path *args:
+test path *args: _ready
     {{ nice }} {{ limit }} python3 {{ quote(build_dir + "/bin/llvm-lit") }} -sv -j {{ quote(test_jobs) }} --timeout 120 {{ quote(source) }}/"$1" "${@:2}"
 
 # Explicitly build prerequisites and run a full upstream suite.
-check suite:
+check suite: _ready
     @just _build cmake --build {{ quote(build_dir) }} --parallel {{ quote(jobs) }} --target "check-$1"
 
-run tool *args:
+run tool *args: _ready
     @{{ quote(build_dir + "/bin") }}/"$1" "${@:2}"
 
 # Run a tool from the main checkout's build: the "before" to this worktree's run.
@@ -180,7 +195,7 @@ alive-mcp:
     @just alive
 
 # List which of these tools are older than the source, so tests would use stale binaries.
-stale +tools:
+stale +tools: _ready
     #!/usr/bin/env bash
     set -euo pipefail
     for tool in "$@"; do
@@ -196,6 +211,7 @@ stale +tools:
 setup-worktree base="":
     #!/usr/bin/env bash
     set -euo pipefail
+    export LLVM_DEV_SETTING_UP=1 # keeps configure's _ready from starting setup again
     common=$(git rev-parse --path-format=absolute --git-common-dir)
     main=$(dirname "$common")
     if [[ "$main" == "$PWD" ]]; then

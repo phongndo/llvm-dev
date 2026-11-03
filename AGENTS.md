@@ -4,13 +4,6 @@ LLVM workspace. `llvm-project/` is the checkout (`origin` = fork, `upstream` = l
 `justfile` drives builds and tests (`just` lists recipes; don't call cmake, ninja or lit
 directly).
 
-## Worktrees
-
-A fresh worktree of this repo has no LLVM until `just setup-worktree` runs (T3 runs it on
-creation); it adds an `llvm-project` worktree and a build of its own. Work and build only
-in your own worktree. Builds across worktrees queue for one lock and share ccache, so
-after the first worktree's, a `just build opt` mostly hits the cache.
-
 ## Compiler work
 
 - LangRef is the spec. A transform is correct only if no input makes the result more
