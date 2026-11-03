@@ -1,6 +1,8 @@
 # Publish only intentional workspace files; preserve unrelated local projects.
 /*
 !/.gitignore
+!/AGENTS.md
+!/CLAUDE.md
 !/.mcp.json
 !/opencode.json
 # MCP servers for Codex and Pi; their other project files stay local.

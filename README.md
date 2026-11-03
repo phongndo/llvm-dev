@@ -30,3 +30,21 @@ just compdb
   run `just configure` and rebuild before garbage-collecting the old shell.
 - `just profile <tool> [args]` records a tool run with perf on Linux or
   Instruments on macOS.
+
+## Agents
+
+`AGENTS.md` (read by Codex, OpenCode and Pi; `CLAUDE.md` imports it) is the agent brief.
+
+Two MCP servers come with the repo: [alive2-mcp](https://github.com/phongndo/alive2-mcp),
+pinned in `flake.nix` and started with this worktree's `opt`, and Compiler Explorer's
+`godbolt.org/mcp`. Each harness reads them from its own project file: `.mcp.json`
+(Claude Code), `.codex/config.toml` (Codex), `opencode.json` (OpenCode) and
+`.pi/mcp.json` (Pi, after `/trust`). In a shell, `just alive` runs the same checks.
+
+Each agent works in its own worktree of this repo. `just setup-worktree` gives a new one
+its own `llvm-project` worktree, starting from the main checkout's commit, and a build;
+T3 Code runs it when it creates a worktree, and `just worktree-new <name>` does both for
+other agents. The main checkout's build is then the "before": `just before opt …` runs
+it, `just run opt …` runs the worktree's. `just worktrees` lists worktrees and
+`just worktree-rm <path>` removes one. Builds take turns through a shared lock and share
+ccache entries across worktrees; `just stale <tools>` finds outdated binaries.
