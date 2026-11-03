@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "alive2": {
+      "command": "nix",
+      "args": ["develop", "--command", "just", "alive-mcp"]
+    },
+    "godbolt": {
+      "type": "http",
+      "url": "https://godbolt.org/mcp"
+    }
+  }
+}

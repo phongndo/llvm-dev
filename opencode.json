@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "alive2": {
+        "type": "local",
+        "command": ["nix", "develop", "--command", "just", "alive-mcp"]
+      },
+      "godbolt": {
+        "type": "remote",
+        "url": "https://godbolt.org/mcp"
+      }
+    }
+  }
+}

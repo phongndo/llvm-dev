@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "alive2": {
+      "command": "nix",
+      "args": ["develop", "--command", "just", "alive-mcp"],
+      "timeout": 900,
+      "description": "Prove or refute LLVM IR transformations with Alive2"
+    },
+    "godbolt": {
+      "url": "https://godbolt.org/mcp",
+      "description": "Compile with upstream trunk compilers on Compiler Explorer"
+    }
+  }
+}

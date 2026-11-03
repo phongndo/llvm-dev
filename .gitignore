@@ -1,6 +1,15 @@
 # Publish only intentional workspace files; preserve unrelated local projects.
 /*
 !/.gitignore
+!/.mcp.json
+!/opencode.json
+# MCP servers for Codex and Pi; their other project files stay local.
+!/.codex/
+/.codex/*
+!/.codex/config.toml
+!/.pi/
+/.pi/*
+!/.pi/mcp.json
 !/flake.nix
 !/flake.lock
 !/justfile

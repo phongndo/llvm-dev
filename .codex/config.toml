@@ -1,0 +1,9 @@
+# Codex reads this in trusted projects; the other harnesses' files list the same servers.
+[mcp_servers.alive2]
+command = "nix"
+args = ["develop", "--command", "just", "alive-mcp"]
+startup_timeout_sec = 60
+tool_timeout_sec = 900
+
+[mcp_servers.godbolt]
+url = "https://godbolt.org/mcp"
