@@ -41,10 +41,11 @@ pinned in `flake.nix` and started with this worktree's `opt`, and Compiler Explo
 (Claude Code), `.codex/config.toml` (Codex), `opencode.json` (OpenCode) and
 `.pi/mcp.json` (Pi, after `/trust`). In a shell, `just alive` runs the same checks.
 
-Each agent works in its own worktree of this repo. `just setup-worktree` gives a new one
-its own `llvm-project` worktree, starting from the main checkout's commit, and a build;
-T3 Code runs it when it creates a worktree, and `just worktree-new <name>` does both for
-other agents. The main checkout's build is then the "before": `just before opt …` runs
+Each agent works in its own worktree of this repo, and none needs to know it. A new
+worktree gets its own `llvm-project` worktree, starting from the main checkout's commit,
+and a build: T3 Code runs `just setup-worktree` before the agent starts (see `t3.json`),
+and in any other worktree the first build, test or configure does it. `just worktree-new
+<name>` makes one by hand. The main checkout's build is then the "before": `just before opt …` runs
 it, `just run opt …` runs the worktree's. `just worktrees` lists worktrees and
 `just worktree-rm <path>` removes one. Builds take turns through a shared lock and share
 ccache entries across worktrees; `just stale <tools>` finds outdated binaries.
