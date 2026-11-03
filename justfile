@@ -191,6 +191,7 @@ alive *args:
     set -euo pipefail
     flags=(-opt {{ quote(build_dir + "/bin/opt") }})
     [[ -x {{ quote(alive2 + "/alive-tv") }} ]] && flags+=(-alive-tv {{ quote(alive2 + "/alive-tv") }})
+    cd {{ quote(invocation_directory()) }} # IR paths are relative to where you ran just
     exec alive2-mcp "${flags[@]}" "$@"
 
 # The Alive2 MCP server for this worktree; harnesses start it from .mcp.json and friends.
