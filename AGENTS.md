@@ -13,6 +13,9 @@ directly).
 - Prove IR changes with the `alive2` MCP (`just alive verify` in a shell), then try to
   break the fix: other flags, operands, branches, vectors, multiple uses. Alive2 is
   bounded and intraprocedural.
+- Find which pass changed the IR, and why, with `opt -print-changed=diff
+  -filter-print-funcs=<fn>`, `-opt-bisect-limit=N` and `-debug-only=<pass>`. Shrink a
+  reproducer with `just reduce <passes> <file>`.
 - Fix the root cause with the pass's existing helpers; report anything wider separately.
 - Commit the test first, with CHECK lines from the unfixed compiler via
   `llvm/utils/update_test_checks.py --version 5`; keep every RUN configuration.
