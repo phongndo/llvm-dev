@@ -198,6 +198,30 @@ alive *args:
 alive-mcp:
     @just alive
 
+# llvm-reduce keeps each cut only if Alive2 still calls the result incorrect, so
+# it never shrinks into IR that merely fails to parse. Uses local alive-tv once
+# built, else alive2.llvm.org.
+# Shrink IR that passes miscompile: `just reduce gvn big.ll` writes big.reduced.ll;
+# extra arguments go to `alive verify`, e.g. `-opt upstream` to reduce against trunk.
+reduce passes file *alive: _ready
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just build llvm-reduce opt >&2
+    cd {{ quote(invocation_directory()) }}
+    test=$(mktemp "${TMPDIR:-/tmp}/reduce-test.XXXXXX")
+    trap 'rm -f "$test"' EXIT
+    # No pipefail here: alive exits 1 for incorrect, and grep's status decides.
+    printf '#!/usr/bin/env bash\njust --justfile %q alive verify%s -passes %q "$1" 2>/dev/null | head -1 | grep -q "^incorrect "\n' \
+      {{ quote(justfile()) }} "$(printf ' %q' "${@:3}")" "$1" > "$test"
+    chmod +x "$test"
+    if ! "$test" "$2"; then
+      echo "$2 is not miscompiled by -passes=$1, so there is nothing to reduce" >&2
+      exit 1
+    fi
+    out="${2%.ll}.reduced.ll"
+    {{ quote(build_dir / "bin/llvm-reduce") }} --test "$test" -j 2 -o "$out" "$2" >&2
+    echo "$out: $(grep -c . "$2") -> $(grep -c . "$out") lines, still miscompiled by -passes=$1"
+
 # List which of these tools are older than the source, so tests would use stale binaries.
 stale +tools: _ready
     #!/usr/bin/env bash
