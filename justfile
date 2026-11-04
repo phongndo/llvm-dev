@@ -233,9 +233,11 @@ reduce passes file *alive: _ready
     cd {{ quote(invocation_directory()) }}
     test=$(mktemp "${TMPDIR:-/tmp}/reduce-test.XXXXXX")
     trap 'rm -f "$test"' EXIT
+    extra=""
+    if (($# > 2)); then extra=$(printf ' %q' "${@:3}"); fi
     # No pipefail here: alive exits 1 for incorrect, and grep's status decides.
     printf '#!/usr/bin/env bash\njust --justfile %q alive verify%s -passes %q "$1" 2>/dev/null | head -1 | grep -q "^incorrect "\n' \
-      {{ quote(justfile()) }} "$(printf ' %q' "${@:3}")" "$1" > "$test"
+      {{ quote(justfile()) }} "$extra" "$1" > "$test"
     chmod +x "$test"
     if ! "$test" "$2"; then
       echo "$2 is not miscompiled by -passes=$1, so there is nothing to reduce" >&2
