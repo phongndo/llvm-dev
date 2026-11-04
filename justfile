@@ -6,10 +6,15 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 # cmake/<profile>.cmake: dev, debug, dev-shared (tools link libLLVM) or validate.
 profile := env("LLVM_PROFILE", "dev")
 
-# Every worktree of this repo is self-contained: its own llvm-project worktree
-# and build directory, set up by setup-worktree. Recipes use the one they run in.
-root := justfile_directory()
-source := env("LLVM_SOURCE", root / "llvm-project")
+# This repo holds the tools. Recipes act on the llvm-project checkout you ran just in:
+# a worktree, which finds this file by searching parent folders (see install-t3), or
+# llvm-project/ when run from here. Each checkout keeps its build in its own build/.
+tools := source_directory()
+here := shell('git -C "$1" rev-parse --show-toplevel 2>/dev/null || true', invocation_directory())
+# Exported so a recipe that calls just stays on the same checkout.
+export LLVM_SOURCE := env("LLVM_SOURCE", if path_exists(here / "llvm") == "true" { here } else { tools / "llvm-project" })
+source := LLVM_SOURCE
+root := source
 
 # Spotlight skips *.noindex directories; build output churns too much to index.
 build_root := if os() == "macos" { "build.noindex" } else { "build" }
@@ -35,26 +40,27 @@ nice := "nice -n 10"
 # Paths relative to the worktree let every worktree reuse the others' ccache
 # entries, since each is laid out the same way. Debug info from a shared entry
 # names the worktree that compiled it first.
-export CCACHE_BASEDIR := justfile_directory()
+export CCACHE_BASEDIR := root
 export CCACHE_NOHASHDIR := "1"
 
 default:
     @just --list
 
-# Sets up a fresh worktree of this repo the first time a recipe needs LLVM, so
-# no agent has to know about it: T3 runs setup-worktree when it creates a
-# worktree, and worktrees from any other harness get here.
+# Configures a checkout the first time a recipe needs its build, so no agent has to.
 _ready:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ -n "${LLVM_DEV_SETTING_UP:-}" ]] || [[ -d {{ quote(source / "llvm") }} && -f {{ quote(build_dir / "build.ninja") }} ]]; then
-      exit 0
+    if [[ ! -d {{ quote(source / "llvm") }} ]]; then
+      echo "no LLVM checkout at "{{ quote(source) }}": run just in llvm-project or one of its worktrees" >&2
+      exit 1
     fi
-    if [[ "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" == "$PWD" ]]; then
-      exit 0 # the main checkout is set up by hand
+    if [[ ! -f {{ quote(build_dir / "build.ninja") }} ]]; then
+      echo "first use of this checkout: configuring its build" >&2
+      just configure >&2
     fi
-    echo "first use of this worktree: setting up its llvm-project and build" >&2
-    just setup-worktree >&2
+    if [[ ! -e {{ quote(root / "compile_commands.json") }} && -e {{ quote(build_dir / "compile_commands.json") }} ]]; then
+      just --quiet compdb
+    fi
 
 # Runs a build under the shared lock, at low priority and inside the memory limit.
 _build *cmd:
@@ -85,7 +91,7 @@ doctor:
 # Built tools reference this flake's Nix store paths: after `nix flake update`,
 # reconfigure and rebuild before garbage-collecting the old shell.
 # Extra arguments are ordinary CMake -D options.
-configure *args: _ready
+configure *args:
     #!/usr/bin/env bash
     set -euo pipefail
     platform=()
@@ -95,7 +101,7 @@ configure *args: _ready
         "-DCMAKE_BUILD_RPATH=${LLVM_DEV_RUNTIME_LIBRARY_PATH//:/;}")
     fi
     cmake -S {{ quote(source + "/llvm") }} -B {{ quote(build_dir) }} -G Ninja \
-      -C {{ quote("cmake/" + profile + ".cmake") }} \
+      -C {{ quote(tools / "cmake" / (profile + ".cmake")) }} \
       -UCMAKE_PROJECT_LLVM_INCLUDE -UHAVE_LIBPFM_INITIALIZE '-UHAVE_PERFMON_*' \
       -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX" \
       "-DCMAKE_C_COMPILER_LAUNCHER=$(command -v ccache)" \
@@ -129,8 +135,25 @@ run tool *args: _ready
 before tool *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-    exec "$main"/{{ quote(build_root / profile / "bin") }}/"$1" "${@:2}"
+    main=$(dirname "$(git -C {{ quote(source) }} rev-parse --path-format=absolute --git-common-dir)")
+    bin="$main"/{{ quote(build_root / profile / "bin") }}/"$1"
+    if [[ ! -x "$bin" ]]; then
+      echo "$bin is not built: run just sync" >&2
+      exit 1
+    fi
+    exec "$bin" "${@:2}"
+
+# New T3 threads start from the main checkout's main, and its build is their "before".
+# Move the main checkout to upstream's latest main and build it.
+sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    main=$(dirname "$(git -C {{ quote(source) }} rev-parse --path-format=absolute --git-common-dir)")
+    git -C "$main" fetch --quiet --no-tags upstream main
+    git -C "$main" switch --quiet main
+    git -C "$main" merge --quiet --ff-only upstream/main
+    LLVM_SOURCE="$main" just middle-tools
+    echo "main checkout built at $(git -C "$main" rev-parse --short HEAD)"
 
 debug tool *args:
     #!/usr/bin/env bash
@@ -196,7 +219,7 @@ alive *args:
 
 # The Alive2 MCP server for this worktree; harnesses start it from .mcp.json and friends.
 alive-mcp:
-    @just alive
+    @cd {{ quote(invocation_directory()) }} && just --justfile {{ quote(justfile()) }} alive
 
 # llvm-reduce keeps each cut only if Alive2 still calls the result incorrect, so
 # it never shrinks into IR that merely fails to parse. Uses local alive-tv once
@@ -231,91 +254,49 @@ stale +tools: _ready
       if [[ $plan == *"no work to do"* ]]; then echo "fresh: $tool"; else echo "stale: $tool"; fi
     done
 
-# T3 runs this when it creates a worktree; run it yourself in any other. The
-# llvm-project branch is named after this worktree's branch and starts from the
-# main checkout's commit, whose build is then the "before" (see before). Pass a
-# ref such as upstream/main to start elsewhere.
-# Give a new worktree of this repo its own llvm-project worktree and build.
-setup-worktree base="":
+# Once per machine: T3 keeps llvm-project's worktrees in this folder, so these files are
+# what just, direnv and Claude find there by searching parent folders. Nothing is written
+# into a worktree, and edits to this repo reach every worktree at once. The Claude hook
+# loads the folder's direnv shell into Claude's Bash tool, for any project with an .envrc.
+# Wire T3's llvm-project worktrees up to this repo.
+install-t3:
     #!/usr/bin/env bash
     set -euo pipefail
-    export LLVM_DEV_SETTING_UP=1 # keeps configure's _ready from starting setup again
-    common=$(git rev-parse --path-format=absolute --git-common-dir)
-    main=$(dirname "$common")
-    if [[ "$main" == "$PWD" ]]; then
-      echo "This is the main checkout; run setup-worktree in a worktree of it." >&2
-      exit 1
-    fi
-    branch=$(git branch --show-current)
-    : "${branch:=worktree-$(basename "$PWD")}"
-    if [[ ! -e llvm-project ]]; then
-      base=${1:-$(git -C "$main/llvm-project" rev-parse HEAD)}
-      if [[ "$base" == upstream/* ]]; then
-        git -C "$main/llvm-project" fetch --quiet --no-tags upstream "${base#upstream/}" ||
-          echo "fetch failed; using the local $base" >&2
-      fi
-      if git -C "$main/llvm-project" show-ref --verify --quiet "refs/heads/$branch"; then
-        git -C "$main/llvm-project" worktree add --quiet "$PWD/llvm-project" "$branch"
-      else
-        git -C "$main/llvm-project" worktree add --quiet -b "$branch" "$PWD/llvm-project" "$base"
-      fi
-    fi
-    mkdir -p .local
-    # Claude Code keeps its approval of this repo's MCP servers per checkout.
-    if [[ -f "$main/.claude/settings.local.json" && ! -e .claude/settings.local.json ]]; then
-      mkdir -p .claude
-      cp "$main/.claude/settings.local.json" .claude/
-    fi
-    if [[ ! -f {{ quote(build_dir / "build.ninja") }} ]]; then
-      just configure > .local/configure.log 2>&1 || {
-        echo "configure failed; see .local/configure.log" >&2
-        exit 1
-      }
-    fi
-    just --quiet compdb
-    echo "llvm-project on $branch at $(git -C llvm-project rev-parse --short HEAD), configured. Next: just build opt"
+    dir="${T3CODE_HOME:-$HOME/.t3}/worktrees/llvm-project"
+    mkdir -p "$dir"
+    printf "import '%s/justfile'\n" {{ quote(tools) }} > "$dir/justfile"
+    printf 'use flake %s\n' {{ quote(tools) }} > "$dir/.envrc"
+    ln -sfn {{ quote(tools / "AGENTS.md") }} "$dir/CLAUDE.md"
+    ln -sfn {{ quote(tools / ".mcp.json") }} "$dir/.mcp.json"
+    direnv allow {{ quote(tools) }}
+    direnv allow "$dir"
+    settings="$HOME/.claude/settings.json"
+    [[ -f "$settings" ]] || echo '{}' > "$settings"
+    hook='test -z "$CLAUDE_ENV_FILE" || direnv export bash >> "$CLAUDE_ENV_FILE" 2>/dev/null; true'
+    updated=$(jq --arg hook "$hook" '
+      if any(.hooks.SessionStart[]?.hooks[]?; .command == $hook) then .
+      else .hooks.SessionStart += [{hooks: [{type: "command", command: $hook, timeout: 300}]}] end
+    ' "$settings")
+    printf '%s\n' "$updated" > "$settings"
+    echo "wired up $dir"
 
-# For agents outside T3: a worktree at trees/<name> on branch <name>, set up.
-worktree-new name base="":
-    git worktree add --quiet -b "$1" trees/"$1"
-    cd trees/"$1" && just setup-worktree "$2"
+# It finds this repo the same way T3's worktrees do. Pass a ref such as upstream/main
+# to start elsewhere.
+# For agents outside T3: a worktree at trees/<name> on branch <name>.
+worktree-new name base="main":
+    git -C {{ quote(source) }} worktree add --quiet -b "$1" {{ quote(tools / "trees") }}/"$1" "$2"
 
-# Each worktree's llvm-project branch, uncommitted files and build size.
+# Each llvm-project worktree's branch, uncommitted files and build size.
 worktrees:
     #!/usr/bin/env bash
     set -euo pipefail
-    git -C llvm-project worktree prune
-    git worktree list --porcelain | sed -n 's/^worktree //p' | while read -r dir; do
-      src="$dir/llvm-project"
-      if [[ ! -e "$src/.git" ]]; then
-        printf '%-50s (not set up: run just setup-worktree there)\n' "$dir"
-        continue
-      fi
-      printf '%-50s %-32s changed=%-3s build=%s\n' "$dir" "$(git -C "$src" branch --show-current)" \
-        "$(git -C "$src" status --porcelain | wc -l | tr -d ' ')" \
+    git -C {{ quote(source) }} worktree prune
+    git -C {{ quote(source) }} worktree list --porcelain | sed -n 's/^worktree //p' | while read -r dir; do
+      printf '%-60s %-32s changed=%-3s build=%s\n' "$dir" "$(git -C "$dir" branch --show-current)" \
+        "$(git -C "$dir" status --porcelain | wc -l | tr -d ' ')" \
         "$(du -sh "$dir"/{{ build_root }} 2>/dev/null | cut -f1)"
     done
 
-# Branches stay; refuses while either checkout has uncommitted changes.
-# Remove a worktree, its llvm-project worktree and its build.
+# Remove a worktree and its build. Git refuses while it has uncommitted changes; its branch stays.
 worktree-rm path:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dir=$(realpath "$1")
-    if [[ "$dir" == "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")" ]]; then
-      echo "refusing to remove the main checkout" >&2
-      exit 1
-    fi
-    # Check both checkouts before deleting anything, so a refusal leaves the worktree whole.
-    for checkout in "$dir" "$dir/llvm-project"; do
-      if [[ -e "$checkout/.git" && -n "$(git -C "$checkout" status --porcelain)" ]]; then
-        echo "$checkout has uncommitted changes" >&2
-        exit 1
-      fi
-    done
-    if [[ -e "$dir/llvm-project/.git" ]]; then
-      git -C llvm-project worktree remove "$dir/llvm-project"
-    fi
-    rm -rf "$dir"/{{ build_root }}
-    git worktree remove "$dir"
-    echo "removed $dir"
+    cd {{ quote(invocation_directory()) }} && git -C {{ quote(source) }} worktree remove "$(realpath "$1")"

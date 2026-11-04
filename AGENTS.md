@@ -1,15 +1,18 @@
 # llvm-dev
 
-LLVM workspace. `llvm-project/` is the checkout (`origin` = fork, `upstream` = llvm); the
-`justfile` drives builds and tests (`just` lists recipes; don't call cmake, ninja or lit
-directly).
+LLVM workspace. You work in an LLVM checkout: `llvm-project/` or a worktree of it, each with
+its own `build/` (`origin` = fork, `upstream` = llvm). The tools live in the llvm-dev repo,
+found by searching parent folders: the `justfile` drives builds and tests (`just` lists
+recipes; don't call cmake, ninja or lit directly). If `IN_NIX_SHELL` is unset, prefix
+commands with `direnv exec .`.
 
 ## Compiler work
 
 - LangRef is the spec. A transform is correct only if no input makes the result more
   poisonous, undefined or trapping than the original; name the semantics behind a claim.
 - Reproduce with this worktree's `opt` before theorizing. The main checkout's build is the
-  "before" (`just before opt …`); the `godbolt` MCP runs upstream trunk.
+  "before" (`just before opt …`; `just sync` moves it to upstream's latest main); the
+  `godbolt` MCP runs upstream trunk.
 - Prove IR changes with the `alive2` MCP (`just alive verify` in a shell), then try to
   break the fix: other flags, operands, branches, vectors, multiple uses. Alive2 is
   bounded and intraprocedural.

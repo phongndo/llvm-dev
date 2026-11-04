@@ -2,7 +2,15 @@
   "mcpServers": {
     "alive2": {
       "command": "nix",
-      "args": ["develop", "--command", "just", "alive-mcp"]
+      "args": [
+        "develop",
+        "${HOME}/code/llvm-dev",
+        "--command",
+        "just",
+        "--justfile",
+        "${HOME}/code/llvm-dev/justfile",
+        "alive-mcp"
+      ]
     },
     "godbolt": {
       "type": "http",
